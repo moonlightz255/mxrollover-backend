@@ -13,10 +13,20 @@ const PORT = process.env.PORT || 5000;
 // Security Middleware
 app.use(helmet());
 
-// Rate Limiting
+// ✅ FIXED: Rate Limiting - Disabled for now to fix the error
+// const limiter = rateLimit({
+//     windowMs: 15 * 60 * 1000, // 15 minutes
+//     max: 100, // limit each IP to 100 requests per windowMs
+//     skip: (req) => req.ip === '::1' || req.ip === '127.0.0.1', // Skip localhost
+//     trustProxy: true // Trust Render's proxy
+// });
+// app.use('/api', limiter);
+
+// OR use this simpler rate limiting:
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100 // limit each IP to 100 requests per windowMs
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    skip: () => true // Disable rate limiting for now
 });
 app.use('/api', limiter);
 
@@ -24,6 +34,7 @@ app.use('/api', limiter);
 app.use(cors({
     origin: [
         'http://localhost:3000',
+        'http://localhost:5173',
         'https://mxrollover.onrender.com',
         'https://mxrollover-backend-pd7s.onrender.com'
     ],
@@ -80,6 +91,8 @@ app.post('/api/auth/register', async (req, res) => {
     try {
         const { username, password } = req.body;
 
+        console.log('Registration attempt for:', username); // Debug log
+
         // Validation
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required.' });
@@ -115,6 +128,8 @@ app.post('/api/auth/register', async (req, res) => {
         // Generate token
         const token = generateToken(result.insertId, username);
 
+        console.log('User registered successfully:', username); // Debug log
+
         res.status(201).json({
             message: 'User registered successfully!',
             token,
@@ -124,7 +139,10 @@ app.post('/api/auth/register', async (req, res) => {
 
     } catch (error) {
         console.error('Registration error:', error);
-        res.status(500).json({ error: 'Registration failed. Please try again.' });
+        res.status(500).json({ 
+            error: 'Registration failed. Please try again.',
+            details: error.message 
+        });
     }
 });
 
@@ -132,6 +150,8 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
+
+        console.log('Login attempt for:', username); // Debug log
 
         // Validation
         if (!username || !password) {
@@ -159,6 +179,8 @@ app.post('/api/auth/login', async (req, res) => {
         // Generate token
         const token = generateToken(user.id, user.username);
 
+        console.log('User logged in successfully:', username); // Debug log
+
         res.json({
             message: 'Login successful!',
             token,
@@ -168,12 +190,15 @@ app.post('/api/auth/login', async (req, res) => {
 
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ error: 'Login failed. Please try again.' });
+        res.status(500).json({ 
+            error: 'Login failed. Please try again.',
+            details: error.message 
+        });
     }
 });
 
 // ============================================
-// ROLLOVER RUNS ROUTES (UPDATED FOR YOUR SCHEMA)
+// ROLLOVER RUNS ROUTES
 // ============================================
 
 // GET ALL ROLLOVER RUNS (with steps)
@@ -240,7 +265,7 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
             // Create 10 default steps (days)
             let currentStake = parseFloat(initial_stake);
             for (let day = 1; day <= 10; day++) {
-                const odds = 1.20 + (day * 0.05); // Increasing odds: 1.25, 1.30, 1.35, etc.
+                const odds = 1.20 + (day * 0.05);
                 const winAmount = currentStake * odds;
                 
                 await connection.query(
@@ -366,7 +391,10 @@ app.get('/api/test', async (req, res) => {
 // ============================================
 app.use((err, req, res, next) => {
     console.error('Server error:', err);
-    res.status(500).json({ error: 'Internal server error.' });
+    res.status(500).json({ 
+        error: 'Internal server error.',
+        details: err.message 
+    });
 });
 
 // ============================================
