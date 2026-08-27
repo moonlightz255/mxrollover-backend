@@ -25,8 +25,7 @@ app.use(cors({
     origin: [
         'http://localhost:3000',
         'https://mxrollover.onrender.com',
-        'https://mxrollover.vercel.app',
-        'https://mxrollover.netlify.app'
+        'https://mxrollover-backend-pd7s.onrender.com'
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -174,7 +173,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ============================================
-// ROLLOVER RUNS ROUTES
+// ROLLOVER RUNS ROUTES (UPDATED FOR YOUR SCHEMA)
 // ============================================
 
 // GET ALL ROLLOVER RUNS (with steps)
@@ -184,14 +183,14 @@ app.get('/api/rollovers', verifyToken, async (req, res) => {
 
         // Get all rollover runs for this user
         const [runs] = await pool.query(
-            'SELECT * FROM rollover_runs WHERE user_id = ? ORDER BY created_at DESC',
+            'SELECT * FROM rollovers WHERE user_id = ? ORDER BY created_at DESC',
             [userId]
         );
 
         // Get steps for each run
         for (let run of runs) {
             const [steps] = await pool.query(
-                'SELECT * FROM rollover_steps WHERE run_id = ? ORDER BY day_number ASC',
+                'SELECT * FROM bet_steps WHERE rollover_id = ? ORDER BY day_number ASC',
                 [run.id]
             );
             run.steps = steps;
@@ -222,7 +221,7 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
         try {
             // Create the rollover run
             const [result] = await connection.query(
-                `INSERT INTO rollover_runs 
+                `INSERT INTO rollovers 
                 (user_id, title, target_goal, initial_stake, base_odds, current_stake, status) 
                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
                 [
@@ -245,8 +244,8 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
                 const winAmount = currentStake * odds;
                 
                 await connection.query(
-                    `INSERT INTO rollover_steps 
-                    (run_id, day_number, stake, odds, win_amount, status) 
+                    `INSERT INTO bet_steps 
+                    (rollover_id, day_number, stake, odds, win_amount, status) 
                     VALUES (?, ?, ?, ?, ?, ?)`,
                     [
                         runId,
@@ -291,8 +290,8 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
         // Verify the bet belongs to this user
         const [check] = await pool.query(
             `SELECT s.*, r.user_id 
-            FROM rollover_steps s
-            JOIN rollover_runs r ON s.run_id = r.id
+            FROM bet_steps s
+            JOIN rollovers r ON s.rollover_id = r.id
             WHERE s.id = ? AND r.user_id = ?`,
             [betId, userId]
         );
@@ -303,15 +302,15 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
 
         // Update status
         await pool.query(
-            'UPDATE rollover_steps SET status = ? WHERE id = ?',
+            'UPDATE bet_steps SET status = ? WHERE id = ?',
             [status, betId]
         );
 
         // If bet is loss, mark the run as finished
         if (status === 'loss') {
             await pool.query(
-                'UPDATE rollover_runs SET status = ? WHERE id = ?',
-                ['finished', check[0].run_id]
+                'UPDATE rollovers SET status = ? WHERE id = ?',
+                ['finished', check[0].rollover_id]
             );
         }
 
