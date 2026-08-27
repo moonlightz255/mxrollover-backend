@@ -1,51 +1,58 @@
 const express = require('express');
 const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 require('dotenv').config();
-const mysql = require('mysql2/promise');
+const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Security Middleware
-app.use(helmet());
-
-// Rate Limiting - Fixed version
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    skip: (req) => req.ip === '::1' || req.ip === '127.0.0.1',
-    trustProxy: true
-});
-app.use('/api', limiter);
-
-// CORS Configuration
+// CORS
 app.use(cors({
     origin: [
         'http://localhost:3000',
-        'http://localhost:5173',
         'https://mxrollover.onrender.com',
         'https://mxrollover-backend-pd7s.onrender.com'
     ],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    credentials: true
 }));
-
 app.use(express.json());
 
 // ============================================
-// DATABASE CONNECTION
+// DATABASE CONNECTION - FIXED VERSION
 // ============================================
-const pool = mysql.createPool(process.env.DB_URI);
+const pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: parseInt(process.env.DB_PORT) || 3306,
+    ssl: {
+        rejectUnauthorized: true
+    },
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
+
+// Convert to promise-based pool
+const promisePool = pool.promise();
 
 // Test database connection
-pool.getConnection()
-    .then(() => console.log('✅ MySQL database connected successfully'))
-    .catch(err => console.error('❌ Database connection failed:', err.message));
+promisePool.getConnection()
+    .then((connection) => {
+        console.log('✅ MySQL database connected successfully');
+        connection.release();
+    })
+    .catch(err => {
+        console.error('❌ Database connection failed:', err.message);
+        console.error('Please check your environment variables:');
+        console.error('DB_HOST:', process.env.DB_HOST);
+        console.error('DB_USER:', process.env.DB_USER);
+        console.error('DB_NAME:', process.env.DB_NAME);
+        console.error('DB_PORT:', process.env.DB_PORT);
+    });
 
 // ============================================
 // JWT HELPER FUNCTIONS
@@ -95,7 +102,7 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters.' });
         }
 
-        const [existing] = await pool.query(
+        const [existing] = await promisePool.query(
             'SELECT id FROM users WHERE username = ?',
             [username]
         );
@@ -106,7 +113,7 @@ app.post('/api/auth/register', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        const [result] = await pool.query(
+        const [result] = await promisePool.query(
             'INSERT INTO users (username, password) VALUES (?, ?)',
             [username, hashedPassword]
         );
@@ -137,7 +144,7 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(400).json({ error: 'Username and password are required.' });
         }
 
-        const [users] = await pool.query(
+        const [users] = await promisePool.query(
             'SELECT * FROM users WHERE username = ?',
             [username]
         );
@@ -175,13 +182,13 @@ app.get('/api/rollovers', verifyToken, async (req, res) => {
     try {
         const userId = req.user.userId;
 
-        const [runs] = await pool.query(
+        const [runs] = await promisePool.query(
             'SELECT * FROM rollovers WHERE user_id = ? ORDER BY created_at DESC',
             [userId]
         );
 
         for (let run of runs) {
-            const [steps] = await pool.query(
+            const [steps] = await promisePool.query(
                 'SELECT * FROM bet_steps WHERE rollover_id = ? ORDER BY day_number ASC',
                 [run.id]
             );
@@ -206,7 +213,7 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
             return res.status(400).json({ error: 'Title and initial stake are required.' });
         }
 
-        const connection = await pool.getConnection();
+        const connection = await promisePool.getConnection();
         await connection.beginTransaction();
 
         try {
@@ -250,13 +257,13 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
             }
 
             await connection.commit();
+            connection.release();
             res.status(201).json({ message: 'Rollover run created successfully!', runId });
 
         } catch (error) {
             await connection.rollback();
-            throw error;
-        } finally {
             connection.release();
+            throw error;
         }
 
     } catch (error) {
@@ -272,7 +279,7 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
         const { status } = req.body;
         const userId = req.user.userId;
 
-        const [check] = await pool.query(
+        const [check] = await promisePool.query(
             `SELECT s.*, r.user_id 
             FROM bet_steps s
             JOIN rollovers r ON s.rollover_id = r.id
@@ -284,13 +291,13 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
             return res.status(404).json({ error: 'Bet not found.' });
         }
 
-        await pool.query(
+        await promisePool.query(
             'UPDATE bet_steps SET status = ? WHERE id = ?',
             [status, betId]
         );
 
         if (status === 'loss') {
-            await pool.query(
+            await promisePool.query(
                 'UPDATE rollovers SET status = ? WHERE id = ?',
                 ['finished', check[0].rollover_id]
             );
@@ -307,7 +314,7 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
 // HEALTH CHECK
 app.get('/api/health', async (req, res) => {
     try {
-        const [result] = await pool.query('SELECT 1 as connected, NOW() as time');
+        const [result] = await promisePool.query('SELECT 1 as connected, NOW() as time');
         res.json({
             status: 'OK',
             database: 'Connected',
