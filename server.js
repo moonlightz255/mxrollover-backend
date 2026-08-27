@@ -20,14 +20,10 @@ app.use(cors({
 app.use(express.json());
 
 // ============================================
-// DATABASE CONNECTION - FIXED VERSION
+// DATABASE CONNECTION - Using DB_URI
 // ============================================
 const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    port: parseInt(process.env.DB_PORT) || 3306,
+    uri: process.env.DB_URI,
     ssl: {
         rejectUnauthorized: true
     },
@@ -47,11 +43,7 @@ promisePool.getConnection()
     })
     .catch(err => {
         console.error('❌ Database connection failed:', err.message);
-        console.error('Please check your environment variables:');
-        console.error('DB_HOST:', process.env.DB_HOST);
-        console.error('DB_USER:', process.env.DB_USER);
-        console.error('DB_NAME:', process.env.DB_NAME);
-        console.error('DB_PORT:', process.env.DB_PORT);
+        console.error('Please check your DB_URI environment variable');
     });
 
 // ============================================
