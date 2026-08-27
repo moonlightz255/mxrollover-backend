@@ -27,7 +27,7 @@ app.use(cors({
 app.use(express.json());
 
 // ============================================
-// DATABASE CONNECTION
+// DATABASE CONNECTION (Updated for Aiven)
 // ============================================
 console.log('🔍 Connecting to database...');
 
@@ -36,15 +36,17 @@ const pool = mysql.createPool({
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: parseInt(process.env.DB_PORT) || 3306,
+    port: parseInt(process.env.DB_PORT) || 11292, // UPDATED to Aiven's specific port
     ssl: {
-        // Set to false for free tiers. If your DB requires strict SSL, you might need to set this to true, 
-        // but many free DBs fail with ETIMEDOUT when rejectUnauthorized is true.
+        // Aiven requires SSL, but we use false to allow the handshake without needing the specific CA certificate file
         rejectUnauthorized: false 
     },
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
+    queueLimit: 0,
+    // CRITICAL: Increased timeouts to prevent 'ETIMEDOUT' when Aiven is waking up from sleep
+    connectTimeout: 60000, 
+    acquireTimeout: 60000
 });
 
 const promisePool = pool.promise();
