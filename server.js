@@ -20,7 +20,8 @@ app.use(cors({
     origin: [
         'http://localhost:3000',
         'https://mxrollover.onrender.com',
-        'https://moonlightz255.github.io' // Added GitHub Pages URL
+        'https://moonlightz255.github.io', 
+        'https://moonlightz255.github.io/mx' // Added because your frontend lives at /mx
     ],
     credentials: true
 }));
@@ -36,7 +37,7 @@ const pool = mysql.createPool({
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: parseInt(process.env.DB_PORT) || 3306, 
+    port: parseInt(process.env.DB_PORT) || 11292, // Aiven's port
     ssl: {
         // Aiven requires SSL, but we use false to allow the handshake without needing the specific CA certificate file
         rejectUnauthorized: false 
@@ -44,7 +45,7 @@ const pool = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    // CRITICAL: Increased timeouts to prevent 'ETIMEDOUT' when Aiven is waking up from sleep
+    // Increased connectTimeout to prevent 'ETIMEDOUT'
     connectTimeout: 60000 
 });
 
