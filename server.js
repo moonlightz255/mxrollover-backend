@@ -13,20 +13,12 @@ const PORT = process.env.PORT || 5000;
 // Security Middleware
 app.use(helmet());
 
-// ✅ FIXED: Rate Limiting - Disabled for now to fix the error
-// const limiter = rateLimit({
-//     windowMs: 15 * 60 * 1000, // 15 minutes
-//     max: 100, // limit each IP to 100 requests per windowMs
-//     skip: (req) => req.ip === '::1' || req.ip === '127.0.0.1', // Skip localhost
-//     trustProxy: true // Trust Render's proxy
-// });
-// app.use('/api', limiter);
-
-// OR use this simpler rate limiting:
+// Rate Limiting - Fixed version
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
-    skip: () => true // Disable rate limiting for now
+    skip: (req) => req.ip === '::1' || req.ip === '127.0.0.1',
+    trustProxy: true
 });
 app.use('/api', limiter);
 
@@ -91,9 +83,6 @@ app.post('/api/auth/register', async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        console.log('Registration attempt for:', username); // Debug log
-
-        // Validation
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required.' });
         }
@@ -106,7 +95,6 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters.' });
         }
 
-        // Check if username already exists
         const [existing] = await pool.query(
             'SELECT id FROM users WHERE username = ?',
             [username]
@@ -116,19 +104,14 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(400).json({ error: 'Username already taken.' });
         }
 
-        // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Create user
         const [result] = await pool.query(
             'INSERT INTO users (username, password) VALUES (?, ?)',
             [username, hashedPassword]
         );
 
-        // Generate token
         const token = generateToken(result.insertId, username);
-
-        console.log('User registered successfully:', username); // Debug log
 
         res.status(201).json({
             message: 'User registered successfully!',
@@ -140,8 +123,7 @@ app.post('/api/auth/register', async (req, res) => {
     } catch (error) {
         console.error('Registration error:', error);
         res.status(500).json({ 
-            error: 'Registration failed. Please try again.',
-            details: error.message 
+            error: 'Registration failed. Please try again.'
         });
     }
 });
@@ -151,14 +133,10 @@ app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        console.log('Login attempt for:', username); // Debug log
-
-        // Validation
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required.' });
         }
 
-        // Find user
         const [users] = await pool.query(
             'SELECT * FROM users WHERE username = ?',
             [username]
@@ -169,17 +147,13 @@ app.post('/api/auth/login', async (req, res) => {
         }
 
         const user = users[0];
-
-        // Verify password
         const validPassword = await bcrypt.compare(password, user.password);
+
         if (!validPassword) {
             return res.status(401).json({ error: 'Invalid username or password.' });
         }
 
-        // Generate token
         const token = generateToken(user.id, user.username);
-
-        console.log('User logged in successfully:', username); // Debug log
 
         res.json({
             message: 'Login successful!',
@@ -191,28 +165,21 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (error) {
         console.error('Login error:', error);
         res.status(500).json({ 
-            error: 'Login failed. Please try again.',
-            details: error.message 
+            error: 'Login failed. Please try again.'
         });
     }
 });
 
-// ============================================
-// ROLLOVER RUNS ROUTES
-// ============================================
-
-// GET ALL ROLLOVER RUNS (with steps)
+// GET ALL ROLLOVER RUNS
 app.get('/api/rollovers', verifyToken, async (req, res) => {
     try {
         const userId = req.user.userId;
 
-        // Get all rollover runs for this user
         const [runs] = await pool.query(
             'SELECT * FROM rollovers WHERE user_id = ? ORDER BY created_at DESC',
             [userId]
         );
 
-        // Get steps for each run
         for (let run of runs) {
             const [steps] = await pool.query(
                 'SELECT * FROM bet_steps WHERE rollover_id = ? ORDER BY day_number ASC',
@@ -239,12 +206,10 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
             return res.status(400).json({ error: 'Title and initial stake are required.' });
         }
 
-        // Start transaction
         const connection = await pool.getConnection();
         await connection.beginTransaction();
 
         try {
-            // Create the rollover run
             const [result] = await connection.query(
                 `INSERT INTO rollovers 
                 (user_id, title, target_goal, initial_stake, base_odds, current_stake, status) 
@@ -261,9 +226,8 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
             );
 
             const runId = result.insertId;
-
-            // Create 10 default steps (days)
             let currentStake = parseFloat(initial_stake);
+
             for (let day = 1; day <= 10; day++) {
                 const odds = 1.20 + (day * 0.05);
                 const winAmount = currentStake * odds;
@@ -286,11 +250,7 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
             }
 
             await connection.commit();
-
-            res.status(201).json({
-                message: 'Rollover run created successfully!',
-                runId
-            });
+            res.status(201).json({ message: 'Rollover run created successfully!', runId });
 
         } catch (error) {
             await connection.rollback();
@@ -312,7 +272,6 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
         const { status } = req.body;
         const userId = req.user.userId;
 
-        // Verify the bet belongs to this user
         const [check] = await pool.query(
             `SELECT s.*, r.user_id 
             FROM bet_steps s
@@ -325,13 +284,11 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
             return res.status(404).json({ error: 'Bet not found.' });
         }
 
-        // Update status
         await pool.query(
             'UPDATE bet_steps SET status = ? WHERE id = ?',
             [status, betId]
         );
 
-        // If bet is loss, mark the run as finished
         if (status === 'loss') {
             await pool.query(
                 'UPDATE rollovers SET status = ? WHERE id = ?',
@@ -347,9 +304,7 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
     }
 });
 
-// ============================================
 // HEALTH CHECK
-// ============================================
 app.get('/api/health', async (req, res) => {
     try {
         const [result] = await pool.query('SELECT 1 as connected, NOW() as time');
@@ -368,9 +323,7 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-// ============================================
 // TEST ROUTE
-// ============================================
 app.get('/api/test', async (req, res) => {
     res.json({
         message: 'MxRollover API is running!',
@@ -386,22 +339,15 @@ app.get('/api/test', async (req, res) => {
     });
 });
 
-// ============================================
 // ERROR HANDLING
-// ============================================
 app.use((err, req, res, next) => {
     console.error('Server error:', err);
-    res.status(500).json({ 
-        error: 'Internal server error.',
-        details: err.message 
-    });
+    res.status(500).json({ error: 'Internal server error.' });
 });
 
-// ============================================
 // START SERVER
-// ============================================
 app.listen(PORT, () => {
     console.log(`🚀 MxRollover Backend running on port ${PORT}`);
-    console.log(`📊 Database: ${process.env.DB_URI ? 'Connected' : 'Not configured'}`);
+    console.log(`📊 Database: Connected to Aiven MySQL`);
     console.log(`🔒 JWT: ${process.env.JWT_SECRET ? 'Configured' : '⚠️ Using default secret'}`);
 });
