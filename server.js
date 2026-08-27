@@ -36,7 +36,7 @@ const pool = mysql.createPool({
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: parseInt(process.env.DB_PORT) || 11292, // UPDATED to Aiven's specific port
+    port: parseInt(process.env.DB_PORT) || 3306, 
     ssl: {
         // Aiven requires SSL, but we use false to allow the handshake without needing the specific CA certificate file
         rejectUnauthorized: false 
@@ -45,22 +45,33 @@ const pool = mysql.createPool({
     connectionLimit: 10,
     queueLimit: 0,
     // CRITICAL: Increased timeouts to prevent 'ETIMEDOUT' when Aiven is waking up from sleep
-    connectTimeout: 60000, 
-    acquireTimeout: 60000
+    connectTimeout: 60000 
 });
 
 const promisePool = pool.promise();
 
-// Test connection
-promisePool.getConnection()
-    .then((connection) => {
-        console.log('✅ MySQL connected successfully');
-        connection.release();
-    })
-    .catch(err => {
-        console.error('❌ Database connection failed:', err.message);
-        console.error('Please check environment variables');
-    });
+// ============================================
+// DATABASE CONNECTION RETRY LOGIC
+// (Prevents server from crashing while Aiven wakes up)
+// ============================================
+const connectWithRetry = (retries = 5) => {
+    promisePool.getConnection()
+        .then((connection) => {
+            console.log('✅ MySQL connected successfully');
+            connection.release();
+        })
+        .catch(err => {
+            console.error(`❌ Database connection failed (Attempt ${6 - retries}):`, err.message);
+            if (retries > 0) {
+                console.log('Retrying in 10 seconds...');
+                setTimeout(() => connectWithRetry(retries - 1), 10000);
+            } else {
+                console.error('Please check environment variables or Aiven network settings.');
+            }
+        });
+};
+
+connectWithRetry();
 
 // ============================================
 // JWT
