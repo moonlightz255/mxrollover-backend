@@ -8,11 +8,19 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// ============================================
+// ROOT ROUTE (Fixes "Cannot GET /")
+// ============================================
+app.get('/', (req, res) => {
+  res.send('MxRollover Backend is running!');
+});
+
 // CORS
 app.use(cors({
     origin: [
         'http://localhost:3000',
-        'https://mxrollover.onrender.com'
+        'https://mxrollover.onrender.com',
+        'https://moonlightz255.github.io' // Added GitHub Pages URL
     ],
     credentials: true
 }));
@@ -30,7 +38,9 @@ const pool = mysql.createPool({
     database: process.env.DB_NAME,
     port: parseInt(process.env.DB_PORT) || 3306,
     ssl: {
-        rejectUnauthorized: true
+        // Set to false for free tiers. If your DB requires strict SSL, you might need to set this to true, 
+        // but many free DBs fail with ETIMEDOUT when rejectUnauthorized is true.
+        rejectUnauthorized: false 
     },
     waitForConnections: true,
     connectionLimit: 10,
