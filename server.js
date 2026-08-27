@@ -12,27 +12,16 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({
     origin: [
         'http://localhost:3000',
-        'https://mxrollover.onrender.com',
-        'https://mxrollover-backend-pd7s.onrender.com'
+        'https://mxrollover.onrender.com'
     ],
     credentials: true
 }));
 app.use(express.json());
 
 // ============================================
-// DATABASE CONNECTION - Using Individual Variables
+// DATABASE CONNECTION
 // ============================================
-console.log('🔍 Checking environment variables...');
-console.log('DB_HOST:', process.env.DB_HOST);
-console.log('DB_USER:', process.env.DB_USER);
-console.log('DB_NAME:', process.env.DB_NAME);
-console.log('DB_PORT:', process.env.DB_PORT);
-
-// Check if variables exist
-if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASSWORD) {
-    console.error('❌ Missing database environment variables!');
-    console.error('Please set DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME');
-}
+console.log('🔍 Connecting to database...');
 
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
@@ -48,26 +37,21 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
-// Convert to promise-based pool
 const promisePool = pool.promise();
 
-// Test database connection
+// Test connection
 promisePool.getConnection()
     .then((connection) => {
-        console.log('✅ MySQL database connected successfully');
+        console.log('✅ MySQL connected successfully');
         connection.release();
     })
     .catch(err => {
         console.error('❌ Database connection failed:', err.message);
-        console.error('Please check your environment variables:');
-        console.error('DB_HOST:', process.env.DB_HOST);
-        console.error('DB_USER:', process.env.DB_USER);
-        console.error('DB_NAME:', process.env.DB_NAME);
-        console.error('DB_PORT:', process.env.DB_PORT);
+        console.error('Please check environment variables');
     });
 
 // ============================================
-// JWT HELPER FUNCTIONS
+// JWT
 // ============================================
 const generateToken = (userId, username) => {
     return jwt.sign(
@@ -79,11 +63,9 @@ const generateToken = (userId, username) => {
 
 const verifyToken = (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
-    
     if (!token) {
         return res.status(401).json({ error: 'Access denied. No token provided.' });
     }
-
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default-secret-change-this');
         req.user = decoded;
@@ -94,7 +76,7 @@ const verifyToken = (req, res, next) => {
 };
 
 // ============================================
-// AUTHENTICATION ROUTES
+// AUTH ROUTES
 // ============================================
 
 // REGISTER
@@ -105,11 +87,9 @@ app.post('/api/auth/register', async (req, res) => {
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required.' });
         }
-
         if (username.length < 3) {
             return res.status(400).json({ error: 'Username must be at least 3 characters.' });
         }
-
         if (password.length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters.' });
         }
@@ -124,7 +104,6 @@ app.post('/api/auth/register', async (req, res) => {
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-
         const [result] = await promisePool.query(
             'INSERT INTO users (username, password) VALUES (?, ?)',
             [username, hashedPassword]
@@ -141,9 +120,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     } catch (error) {
         console.error('Registration error:', error);
-        res.status(500).json({ 
-            error: 'Registration failed. Please try again.'
-        });
+        res.status(500).json({ error: 'Registration failed. Please try again.' });
     }
 });
 
@@ -183,11 +160,13 @@ app.post('/api/auth/login', async (req, res) => {
 
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ 
-            error: 'Login failed. Please try again.'
-        });
+        res.status(500).json({ error: 'Login failed. Please try again.' });
     }
 });
+
+// ============================================
+// ROLLOVER ROUTES
+// ============================================
 
 // GET ALL ROLLOVER RUNS
 app.get('/api/rollovers', verifyToken, async (req, res) => {
@@ -323,7 +302,9 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
     }
 });
 
+// ============================================
 // HEALTH CHECK
+// ============================================
 app.get('/api/health', async (req, res) => {
     try {
         const [result] = await promisePool.query('SELECT 1 as connected, NOW() as time');
@@ -342,8 +323,7 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-// TEST ROUTE
-app.get('/api/test', async (req, res) => {
+app.get('/api/test', (req, res) => {
     res.json({
         message: 'MxRollover API is running!',
         endpoints: [
@@ -358,15 +338,7 @@ app.get('/api/test', async (req, res) => {
     });
 });
 
-// ERROR HANDLING
-app.use((err, req, res, next) => {
-    console.error('Server error:', err);
-    res.status(500).json({ error: 'Internal server error.' });
-});
-
-// START SERVER
+// START
 app.listen(PORT, () => {
     console.log(`🚀 MxRollover Backend running on port ${PORT}`);
-    console.log(`📊 Database: Host=${process.env.DB_HOST}`);
-    console.log(`🔒 JWT: ${process.env.JWT_SECRET ? 'Configured' : '⚠️ Using default secret'}`);
 });
