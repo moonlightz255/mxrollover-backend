@@ -21,7 +21,7 @@ app.use(cors({
         'http://localhost:3000',
         'https://mxrollover.onrender.com',
         'https://moonlightz255.github.io', 
-        'https://moonlightz255.github.io/mx' // Added because your frontend lives at /mx
+        'https://moonlightz255.github.io/mx' 
     ],
     credentials: true
 }));
@@ -39,13 +39,11 @@ const pool = mysql.createPool({
     database: process.env.DB_NAME,
     port: parseInt(process.env.DB_PORT) || 11292, // Aiven's port
     ssl: {
-        // Aiven requires SSL, but we use false to allow the handshake without needing the specific CA certificate file
         rejectUnauthorized: false 
     },
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    // Increased connectTimeout to prevent 'ETIMEDOUT'
     connectTimeout: 60000 
 });
 
@@ -53,7 +51,6 @@ const promisePool = pool.promise();
 
 // ============================================
 // DATABASE CONNECTION RETRY LOGIC
-// (Prevents server from crashing while Aiven wakes up)
 // ============================================
 const connectWithRetry = (retries = 5) => {
     promisePool.getConnection()
@@ -73,6 +70,21 @@ const connectWithRetry = (retries = 5) => {
 };
 
 connectWithRetry();
+
+// Helper function to wait for DB connection if it's still waking up
+const waitForDatabase = async (maxRetries = 20) => {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            const connection = await promisePool.getConnection();
+            connection.release();
+            return; // Connection successful
+        } catch (err) {
+            console.log(`⏳ Waiting for database to wake up... (Attempt ${i + 1}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds before retrying
+        }
+    }
+    throw new Error('Database connection could not be established.');
+};
 
 // ============================================
 // JWT
@@ -106,6 +118,9 @@ const verifyToken = (req, res, next) => {
 // REGISTER
 app.post('/api/auth/register', async (req, res) => {
     try {
+        // Wait for DB to wake up if needed
+        await waitForDatabase();
+
         const { username, password } = req.body;
 
         if (!username || !password) {
@@ -151,6 +166,9 @@ app.post('/api/auth/register', async (req, res) => {
 // LOGIN
 app.post('/api/auth/login', async (req, res) => {
     try {
+        // Wait for DB to wake up if needed
+        await waitForDatabase();
+
         const { username, password } = req.body;
 
         if (!username || !password) {
@@ -221,6 +239,9 @@ app.get('/api/rollovers', verifyToken, async (req, res) => {
 // CREATE ROLLOVER RUN
 app.post('/api/rollovers', verifyToken, async (req, res) => {
     try {
+        // Wait for DB to wake up if needed
+        await waitForDatabase();
+
         const userId = req.user.userId;
         const { title, target_goal, initial_stake, base_odds } = req.body;
 
@@ -290,6 +311,9 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
 // UPDATE BET STATUS
 app.put('/api/bets/:id', verifyToken, async (req, res) => {
     try {
+        // Wait for DB to wake up if needed
+        await waitForDatabase();
+
         const betId = req.params.id;
         const { status } = req.body;
         const userId = req.user.userId;
