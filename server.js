@@ -4,31 +4,50 @@ require('dotenv').config();
 const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ============================================
-// ROOT ROUTE (Fixes "Cannot GET /")
+// CORS - allowlist (add any production origins here)
+// ============================================
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://mxrollover.onrender.com',
+  'https://mxrollover-backend-jpyd.onrender.com', // add your Render URL(s)
+  'https://moonlightz255.github.io',
+  'https://moonlightz255.github.io/mx'
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // allow requests with no origin (e.g. mobile apps, curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS policy: origin not allowed: ' + origin));
+  },
+  credentials: true,
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// ensure OPTIONS preflight returns quickly
+app.options('*', cors());
+
+app.use(express.json());
+
+// ============================================
+// ROOT
 // ============================================
 app.get('/', (req, res) => {
   res.send('MxRollover Backend is running!');
 });
 
-// CORS
-app.use(cors({
-    origin: [
-        'http://localhost:3000',
-        'https://mxrollover.onrender.com',
-        'https://moonlightz255.github.io', 
-        'https://moonlightz255.github.io/mx' 
-    ],
-    credentials: true
-}));
-app.use(express.json());
-
 // ============================================
-// DATABASE CONNECTION (Updated for Aiven)
+// DATABASE CONNECTION (Aiven-friendly)
 // ============================================
 console.log('🔍 Connecting to database...');
 
@@ -37,20 +56,32 @@ const pool = mysql.createPool({
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: parseInt(process.env.DB_PORT) || 11292, // Aiven's port
-    ssl: {
-        rejectUnauthorized: false 
-    },
+    port: parseInt(process.env.DB_PORT || '11292', 10),
+    // Aiven requires TLS; if you mount CA, provide it via DB_CA_PATH env
+    ssl: (() => {
+      try {
+        if (process.env.DB_CA_PATH) {
+          return { ca: fs.readFileSync(process.env.DB_CA_PATH, 'utf8'), rejectUnauthorized: true };
+        } else {
+          // If you don't provide CA, allow TLS but don't reject - safer for quick testing.
+          return { rejectUnauthorized: false };
+        }
+      } catch (e) {
+        console.warn('Could not load DB CA file:', e.message);
+        return { rejectUnauthorized: false };
+      }
+    })(),
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    connectTimeout: 60000 
+    connectTimeout: 60000
 });
 
 const promisePool = pool.promise();
 
 // ============================================
-// DATABASE CONNECTION RETRY LOGIC
+// DB connection retry + wait helper
+// - waitForDatabase(maxRetries, delayMs)
 // ============================================
 const connectWithRetry = (retries = 5) => {
     promisePool.getConnection()
@@ -71,20 +102,33 @@ const connectWithRetry = (retries = 5) => {
 
 connectWithRetry();
 
-// Helper function to wait for DB connection if it's still waking up
-const waitForDatabase = async (maxRetries = 20) => {
+const waitForDatabase = async (maxRetries = 40, delayMs = 3000) => {
     for (let i = 0; i < maxRetries; i++) {
         try {
             const connection = await promisePool.getConnection();
             connection.release();
-            return; // Connection successful
+            return; // successful
         } catch (err) {
             console.log(`⏳ Waiting for database to wake up... (Attempt ${i + 1}/${maxRetries})`);
-            await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds before retrying
+            await new Promise(resolve => setTimeout(resolve, delayMs));
         }
     }
-    throw new Error('Database connection could not be established.');
+    throw new Error('Database connection could not be established after waiting.');
 };
+
+// ============================================
+// Middleware: ensure DB ready for /api routes
+// This causes incoming API requests to wait until DB is available.
+// ============================================
+app.use('/api', async (req, res, next) => {
+  try {
+    await waitForDatabase(); // defaults: 40 tries * 3s = up to ~120s
+    return next();
+  } catch (err) {
+    console.error('DB not ready for request:', err.message);
+    return res.status(503).json({ error: 'Service temporarily unavailable. Please try again in a few seconds.' });
+  }
+});
 
 // ============================================
 // JWT
@@ -112,17 +156,13 @@ const verifyToken = (req, res, next) => {
 };
 
 // ============================================
-// AUTH ROUTES
+// AUTH ROUTES (no need to await DB here; middleware already ensures readiness)
 // ============================================
 
 // REGISTER
 app.post('/api/auth/register', async (req, res) => {
     try {
-        // Wait for DB to wake up if needed
-        await waitForDatabase();
-
         const { username, password } = req.body;
-
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required.' });
         }
@@ -166,11 +206,7 @@ app.post('/api/auth/register', async (req, res) => {
 // LOGIN
 app.post('/api/auth/login', async (req, res) => {
     try {
-        // Wait for DB to wake up if needed
-        await waitForDatabase();
-
         const { username, password } = req.body;
-
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required.' });
         }
@@ -207,19 +243,15 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ============================================
-// ROLLOVER ROUTES
+// ROLLOVER ROUTES (same as before)
 // ============================================
-
-// GET ALL ROLLOVER RUNS
 app.get('/api/rollovers', verifyToken, async (req, res) => {
     try {
         const userId = req.user.userId;
-
         const [runs] = await promisePool.query(
             'SELECT * FROM rollovers WHERE user_id = ? ORDER BY created_at DESC',
             [userId]
         );
-
         for (let run of runs) {
             const [steps] = await promisePool.query(
                 'SELECT * FROM bet_steps WHERE rollover_id = ? ORDER BY day_number ASC',
@@ -227,54 +259,42 @@ app.get('/api/rollovers', verifyToken, async (req, res) => {
             );
             run.steps = steps;
         }
-
         res.json(runs);
-
     } catch (error) {
         console.error('Error fetching rollovers:', error);
         res.status(500).json({ error: 'Failed to fetch rollover data.' });
     }
 });
 
-// CREATE ROLLOVER RUN
 app.post('/api/rollovers', verifyToken, async (req, res) => {
     try {
-        // Wait for DB to wake up if needed
-        await waitForDatabase();
-
         const userId = req.user.userId;
         const { title, target_goal, initial_stake, base_odds } = req.body;
-
         if (!title || !initial_stake) {
             return res.status(400).json({ error: 'Title and initial stake are required.' });
         }
-
         const connection = await promisePool.getConnection();
         await connection.beginTransaction();
-
         try {
             const [result] = await connection.query(
                 `INSERT INTO rollovers 
                 (user_id, title, target_goal, initial_stake, base_odds, current_stake, status) 
                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
                 [
-                    userId, 
-                    title, 
-                    target_goal || '1M Goal', 
-                    initial_stake, 
+                    userId,
+                    title,
+                    target_goal || '1M Goal',
+                    initial_stake,
                     base_odds || 1.00,
                     initial_stake,
                     'active'
                 ]
             );
-
             const runId = result.insertId;
             let currentStake = parseFloat(initial_stake);
-
             for (let day = 1; day <= 10; day++) {
                 const odds = 1.20 + (day * 0.05);
                 const winAmount = currentStake * odds;
-                
                 await connection.query(
                     `INSERT INTO bet_steps 
                     (rollover_id, day_number, stake, odds, win_amount, status) 
@@ -288,36 +308,27 @@ app.post('/api/rollovers', verifyToken, async (req, res) => {
                         'pending'
                     ]
                 );
-
                 currentStake = winAmount;
             }
-
             await connection.commit();
             connection.release();
             res.status(201).json({ message: 'Rollover run created successfully!', runId });
-
         } catch (error) {
             await connection.rollback();
             connection.release();
             throw error;
         }
-
     } catch (error) {
         console.error('Error creating rollover:', error);
         res.status(500).json({ error: 'Failed to create rollover run.' });
     }
 });
 
-// UPDATE BET STATUS
 app.put('/api/bets/:id', verifyToken, async (req, res) => {
     try {
-        // Wait for DB to wake up if needed
-        await waitForDatabase();
-
         const betId = req.params.id;
         const { status } = req.body;
         const userId = req.user.userId;
-
         const [check] = await promisePool.query(
             `SELECT s.*, r.user_id 
             FROM bet_steps s
@@ -325,34 +336,27 @@ app.put('/api/bets/:id', verifyToken, async (req, res) => {
             WHERE s.id = ? AND r.user_id = ?`,
             [betId, userId]
         );
-
         if (check.length === 0) {
             return res.status(404).json({ error: 'Bet not found.' });
         }
-
         await promisePool.query(
             'UPDATE bet_steps SET status = ? WHERE id = ?',
             [status, betId]
         );
-
         if (status === 'loss') {
             await promisePool.query(
                 'UPDATE rollovers SET status = ? WHERE id = ?',
                 ['finished', check[0].rollover_id]
             );
         }
-
         res.json({ message: 'Bet status updated successfully!' });
-
     } catch (error) {
         console.error('Error updating bet:', error);
         res.status(500).json({ error: 'Failed to update bet status.' });
     }
 });
 
-// ============================================
-// HEALTH CHECK
-// ============================================
+// HEALTH & TEST
 app.get('/api/health', async (req, res) => {
     try {
         const [result] = await promisePool.query('SELECT 1 as connected, NOW() as time');
@@ -386,7 +390,16 @@ app.get('/api/test', (req, res) => {
     });
 });
 
-// START
-app.listen(PORT, () => {
+// ERROR HANDLER
+app.use((err, req, res, next) => {
+    console.error('Server error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+});
+
+// START SERVER and increase timeout so cold starts aren't cut off
+const server = app.listen(PORT, () => {
     console.log(`🚀 MxRollover Backend running on port ${PORT}`);
 });
+
+// Allow long requests (set to 3 minutes). Set to 0 for no timeout (use carefully).
+server.setTimeout(180000); // 180 seconds
