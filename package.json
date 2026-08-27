@@ -1,7 +1,7 @@
 {
   "name": "mxrollover-backend",
   "version": "1.0.0",
-  "description": "MxRollover Backend API - eFootball betting management",
+  "description": "MxRollover Backend API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
