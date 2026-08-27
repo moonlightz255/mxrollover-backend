@@ -20,10 +20,26 @@ app.use(cors({
 app.use(express.json());
 
 // ============================================
-// DATABASE CONNECTION - Using DB_URI
+// DATABASE CONNECTION - Using Individual Variables
 // ============================================
+console.log('🔍 Checking environment variables...');
+console.log('DB_HOST:', process.env.DB_HOST);
+console.log('DB_USER:', process.env.DB_USER);
+console.log('DB_NAME:', process.env.DB_NAME);
+console.log('DB_PORT:', process.env.DB_PORT);
+
+// Check if variables exist
+if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASSWORD) {
+    console.error('❌ Missing database environment variables!');
+    console.error('Please set DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME');
+}
+
 const pool = mysql.createPool({
-    uri: process.env.DB_URI,
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: parseInt(process.env.DB_PORT) || 3306,
     ssl: {
         rejectUnauthorized: true
     },
@@ -43,7 +59,11 @@ promisePool.getConnection()
     })
     .catch(err => {
         console.error('❌ Database connection failed:', err.message);
-        console.error('Please check your DB_URI environment variable');
+        console.error('Please check your environment variables:');
+        console.error('DB_HOST:', process.env.DB_HOST);
+        console.error('DB_USER:', process.env.DB_USER);
+        console.error('DB_NAME:', process.env.DB_NAME);
+        console.error('DB_PORT:', process.env.DB_PORT);
     });
 
 // ============================================
@@ -347,6 +367,6 @@ app.use((err, req, res, next) => {
 // START SERVER
 app.listen(PORT, () => {
     console.log(`🚀 MxRollover Backend running on port ${PORT}`);
-    console.log(`📊 Database: Connected to Aiven MySQL`);
+    console.log(`📊 Database: Host=${process.env.DB_HOST}`);
     console.log(`🔒 JWT: ${process.env.JWT_SECRET ? 'Configured' : '⚠️ Using default secret'}`);
 });
