@@ -37,7 +37,7 @@ app.use(cors({
 // ensure OPTIONS preflight returns quickly
 app.options('*', cors());
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Allow large base64 images
 
 // ============================================
 // ROOT
@@ -243,6 +243,40 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ============================================
+// PROFILE ROUTES (Online Data Sync)
+// ============================================
+
+// GET PROFILE
+app.get('/api/user/profile', verifyToken, async (req, res) => {
+    try {
+        const [users] = await promisePool.query(
+            'SELECT username, profile_pic, bg_image, theme FROM users WHERE id = ?',
+            [req.user.userId]
+        );
+        if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
+        res.json(users[0]);
+    } catch (error) {
+        console.error('Error fetching profile:', error);
+        res.status(500).json({ error: 'Failed to fetch profile.' });
+    }
+});
+
+// UPDATE PROFILE
+app.put('/api/user/profile', verifyToken, async (req, res) => {
+    try {
+        const { username, profile_pic, bg_image, theme } = req.body;
+        await promisePool.query(
+            'UPDATE users SET username = ?, profile_pic = ?, bg_image = ?, theme = ? WHERE id = ?',
+            [username, profile_pic || null, bg_image || null, theme || 'default', req.user.userId]
+        );
+        res.json({ message: 'Profile updated successfully!' });
+    } catch (error) {
+        console.error('Error updating profile:', error);
+        res.status(500).json({ error: 'Failed to update profile.' });
+    }
+});
+
+// ============================================
 // ROLLOVER ROUTES (same as before)
 // ============================================
 app.get('/api/rollovers', verifyToken, async (req, res) => {
@@ -381,6 +415,8 @@ app.get('/api/test', (req, res) => {
         endpoints: [
             'POST /api/auth/register',
             'POST /api/auth/login',
+            'GET /api/user/profile',
+            'PUT /api/user/profile',
             'GET /api/rollovers',
             'POST /api/rollovers',
             'PUT /api/bets/:id',
